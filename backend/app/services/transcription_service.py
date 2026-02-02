@@ -59,7 +59,10 @@ class TranscriptionService:
             try:
                 # O T5 espera o prefixo 'summarize: '
                 # Limitamos o tamanho para gerar algo curto como um título
-                input_text = f"summarize: {text[:512]}" # Limita entrada para performance
+                input_text = (
+                    "generate a short and clear title for the following text: "
+                    f"{text[:512]}"
+                ) # Limita entrada para performance
                 result = self.summarizer(input_text, max_length=15, min_length=3, do_sample=False)
                 
                 title = result[0]['summary_text']
