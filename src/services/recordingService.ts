@@ -1,11 +1,10 @@
 import * as SQLite from 'expo-sqlite';
-import * as FileSystem from 'expo-file-system';
-import * as FileSystemLegacy from 'expo-file-system/legacy';
+import * as FileSystem from 'expo-file-system/legacy';
 import * as Crypto from 'expo-crypto';
 import { Recording } from '../types';
 
 const DB_NAME = 'recordings.db';
-const RECORDINGS_DIR = FileSystemLegacy.documentDirectory + 'recordings/';
+const RECORDINGS_DIR = (FileSystem.documentDirectory || FileSystem.cacheDirectory) + 'recordings/';
 
 export class RecordingService {
   private db: SQLite.SQLiteDatabase | null = null;
@@ -15,10 +14,9 @@ export class RecordingService {
 
     // Ensure recordings directory exists
     try {
-      // Use legacy API for methods that are deprecated in the main package
-      const dirInfo = await FileSystemLegacy.getInfoAsync(RECORDINGS_DIR);
+      const dirInfo = await FileSystem.getInfoAsync(RECORDINGS_DIR);
       if (!dirInfo.exists) {
-        await FileSystemLegacy.makeDirectoryAsync(RECORDINGS_DIR, { intermediates: true });
+        await FileSystem.makeDirectoryAsync(RECORDINGS_DIR, { intermediates: true });
       }
     } catch (error) {
       // Directory likely exists or cannot be created
@@ -47,7 +45,7 @@ export class RecordingService {
     const newPath = RECORDINGS_DIR + fileName;
 
     // Move file from cache to permanent storage
-    await FileSystemLegacy.moveAsync({
+    await FileSystem.moveAsync({
       from: tempUri,
       to: newPath
     });
@@ -81,7 +79,7 @@ export class RecordingService {
     if (!this.db) throw new Error('Database not initialized');
 
     const result = await this.db.getAllAsync<any>('SELECT * FROM recordings ORDER BY createdAt DESC');
-    
+
     return result.map(row => ({
       ...row,
       meteringLevels: row.meteringLevels ? JSON.parse(row.meteringLevels) : []
@@ -94,11 +92,11 @@ export class RecordingService {
 
     const recording = await this.db.getFirstAsync<any>('SELECT fileUri FROM recordings WHERE id = ?', id);
     if (recording) {
-        try {
-            await FileSystemLegacy.deleteAsync(recording.fileUri, { idempotent: true });
-        } catch (e) {
-            console.warn("Could not delete file", e);
-        }
+      try {
+        await FileSystem.deleteAsync(recording.fileUri, { idempotent: true });
+      } catch (e) {
+        console.warn("Could not delete file", e);
+      }
     }
 
     await this.db.runAsync('DELETE FROM recordings WHERE id = ?', id);

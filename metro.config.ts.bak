@@ -1,0 +1,16 @@
+import { getDefaultConfig } from "expo/metro-config";
+import { withNativeWind } from "nativewind/metro";
+
+const config = getDefaultConfig(__dirname);
+
+// Ensure wasm is treated as an asset
+if (config.resolver && config.resolver.assetExts && !config.resolver.assetExts.includes("wasm")) {
+  config.resolver.assetExts.push("wasm");
+}
+
+// Ensure wasm is NOT treated as a source file (if it happens to be there)
+if (config.resolver && config.resolver.sourceExts) {
+  config.resolver.sourceExts = config.resolver.sourceExts.filter((ext) => ext !== "wasm");
+}
+
+export default withNativeWind(config, { input: "./global.css" });
