@@ -2,6 +2,7 @@ import * as SQLite from 'expo-sqlite';
 import * as FileSystem from 'expo-file-system/legacy';
 import * as Crypto from 'expo-crypto';
 import { Recording } from '../types';
+export { Recording };
 
 const DB_NAME = 'recordings.db';
 const RECORDINGS_DIR = (FileSystem.documentDirectory || FileSystem.cacheDirectory) + 'recordings/';
@@ -31,9 +32,29 @@ export class RecordingService {
         createdAt TEXT NOT NULL,
         status TEXT NOT NULL,
         fileUri TEXT NOT NULL,
-        meteringLevels TEXT
+        meteringLevels TEXT,
+        transcription TEXT,
+        language TEXT,
+        transcriptionStatus TEXT
       );
     `);
+
+    // Attempt to add columns for existing databases (primitive migration)
+    try {
+      await this.db.execAsync('ALTER TABLE recordings ADD COLUMN transcription TEXT');
+    } catch (e) {
+      // Column likely exists
+    }
+    try {
+      await this.db.execAsync('ALTER TABLE recordings ADD COLUMN language TEXT');
+    } catch (e) {
+      // Column likely exists
+    }
+    try {
+      await this.db.execAsync('ALTER TABLE recordings ADD COLUMN transcriptionStatus TEXT');
+    } catch (e) {
+      // Column likely exists
+    }
   }
 
   async saveRecording(tempUri: string, duration: number, meteringLevels: number[] = []): Promise<Recording> {
@@ -57,18 +78,20 @@ export class RecordingService {
       createdAt: new Date().toISOString(),
       status: 'draft',
       fileUri: newPath,
-      meteringLevels
+      meteringLevels,
+      transcriptionStatus: 'pending'
     };
 
     await this.db.runAsync(
-      'INSERT INTO recordings (id, title, duration, createdAt, status, fileUri, meteringLevels) VALUES (?, ?, ?, ?, ?, ?, ?)',
+      'INSERT INTO recordings (id, title, duration, createdAt, status, fileUri, meteringLevels, transcriptionStatus) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
       recording.id,
       recording.title,
       recording.duration,
       recording.createdAt,
       recording.status,
       recording.fileUri,
-      JSON.stringify(meteringLevels)
+      JSON.stringify(meteringLevels),
+      recording.transcriptionStatus || 'pending'
     );
 
     return recording;
@@ -100,6 +123,54 @@ export class RecordingService {
     }
 
     await this.db.runAsync('DELETE FROM recordings WHERE id = ?', id);
+  }
+
+  async updateTranscription(id: string, transcription: string, language?: string, title?: string): Promise<void> {
+    await this.init();
+    if (!this.db) throw new Error('Database not initialized');
+
+    if (title) {
+      await this.db.runAsync(
+        'UPDATE recordings SET transcription = ?, language = ?, transcriptionStatus = ?, title = ? WHERE id = ?',
+        transcription,
+        language || null,
+        'completed',
+        title,
+        id
+      );
+    } else {
+      await this.db.runAsync(
+        'UPDATE recordings SET transcription = ?, language = ?, transcriptionStatus = ? WHERE id = ?',
+        transcription,
+        language || null,
+        'completed',
+        id
+      );
+    }
+  }
+
+  async updateTranscriptionStatus(id: string, status: 'pending' | 'processing' | 'completed' | 'failed'): Promise<void> {
+    await this.init();
+    if (!this.db) throw new Error('Database not initialized');
+
+    await this.db.runAsync(
+      'UPDATE recordings SET transcriptionStatus = ? WHERE id = ?',
+      status,
+      id
+    );
+  }
+
+  async getRecordingById(id: string): Promise<Recording | null> {
+    await this.init();
+    if (!this.db) throw new Error('Database not initialized');
+
+    const row = await this.db.getFirstAsync<any>('SELECT * FROM recordings WHERE id = ?', id);
+    if (!row) return null;
+
+    return {
+      ...row,
+      meteringLevels: row.meteringLevels ? JSON.parse(row.meteringLevels) : []
+    };
   }
 }
 

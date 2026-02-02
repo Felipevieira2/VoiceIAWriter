@@ -11,7 +11,7 @@ export function useAudioRecorder(): AudioRecorderHook {
   // State Machine
   const [status, setStatus] = useState<RecorderStatus>('idle');
   const [error, setError] = useState<string | null>(null);
-  
+
   // Observable Data
   const [recordingTime, setRecordingTime] = useState(0);
   const [audioLevel, setAudioLevel] = useState(0);
@@ -21,6 +21,7 @@ export function useAudioRecorder(): AudioRecorderHook {
   // "Use exactly ONE recording instance stored in useRef"
   const recordingRef = useRef<Audio.Recording | null>(null);
   const meteringRef = useRef<number[]>([]);
+  const durationRef = useRef(0);
 
   // Cleanup function
   const cleanup = useCallback(async () => {
@@ -28,7 +29,7 @@ export function useAudioRecorder(): AudioRecorderHook {
       try {
         recordingRef.current.setOnRecordingStatusUpdate(null);
         const status = await recordingRef.current.getStatusAsync();
-        if (status.isLoaded) {
+        if (status.canRecord || status.isRecording) {
           await recordingRef.current.stopAndUnloadAsync();
         }
       } catch (err) {
@@ -50,6 +51,7 @@ export function useAudioRecorder(): AudioRecorderHook {
     if (statusUpdate.durationMillis !== undefined) {
       // "Timer must stop when paused" - handled by expo-av durationMillis not increasing when paused
       setRecordingTime(statusUpdate.durationMillis);
+      durationRef.current = statusUpdate.durationMillis;
     }
 
     if (statusUpdate.metering !== undefined) {
@@ -68,7 +70,7 @@ export function useAudioRecorder(): AudioRecorderHook {
     // State Machine: idle -> recording
     // Allow restarting from stopped/error if needed.
     if (status !== 'idle' && status !== 'stopped' && status !== 'error') {
-        throw new Error(`Invalid transition: Cannot start recording from ${status}`);
+      throw new Error(`Invalid transition: Cannot start recording from ${status}`);
     }
 
     try {
@@ -79,6 +81,7 @@ export function useAudioRecorder(): AudioRecorderHook {
 
       setError(null);
       setRecordingTime(0);
+      durationRef.current = 0;
       setAudioLevel(0);
       meteringRef.current = [];
 
@@ -98,17 +101,17 @@ export function useAudioRecorder(): AudioRecorderHook {
 
       // Create NEW instance only on start
       const recording = new Audio.Recording();
-      
+
       // Assign IMMEDIATELY so cleanup works if prepare/start fails
       recordingRef.current = recording;
-      
+
       await recording.prepareToRecordAsync(Audio.RecordingOptionsPresets.HIGH_QUALITY);
-      
+
       recording.setOnRecordingStatusUpdate(handleStatusUpdate);
       recording.setProgressUpdateInterval(UPDATE_INTERVAL_MS);
 
       await recording.startAsync();
-      
+
       setStatus('recording');
 
     } catch (err: any) {
@@ -123,11 +126,11 @@ export function useAudioRecorder(): AudioRecorderHook {
   const pauseRecording = async () => {
     // State Machine: recording -> paused
     if (status !== 'recording') {
-        throw new Error(`Invalid transition: Cannot pause from ${status}`);
+      throw new Error(`Invalid transition: Cannot pause from ${status}`);
     }
 
     if (!recordingRef.current) {
-        throw new Error('No active recording session');
+      throw new Error('No active recording session');
     }
 
     try {
@@ -135,7 +138,7 @@ export function useAudioRecorder(): AudioRecorderHook {
       // "Do NOT unload the recording on pause"
       await recordingRef.current.pauseAsync();
       setStatus('paused');
-      
+
       // Optional: zero out level for UI
       setAudioLevel(0);
       setIsVoiceDetected(false);
@@ -149,11 +152,11 @@ export function useAudioRecorder(): AudioRecorderHook {
   const resumeRecording = async () => {
     // State Machine: paused -> recording
     if (status !== 'paused') {
-        throw new Error(`Invalid transition: Cannot resume from ${status}`);
+      throw new Error(`Invalid transition: Cannot resume from ${status}`);
     }
 
     if (!recordingRef.current) {
-         throw new Error('No active recording session to resume');
+      throw new Error('No active recording session to resume');
     }
 
     try {
@@ -172,11 +175,11 @@ export function useAudioRecorder(): AudioRecorderHook {
     // State Machine: recording -> stopped
     // Also handling paused -> stopped as implied necessity
     if (status !== 'recording' && status !== 'paused') {
-         throw new Error(`Invalid transition: Cannot stop from ${status}`);
+      throw new Error(`Invalid transition: Cannot stop from ${status}`);
     }
 
     if (!recordingRef.current) {
-        return null;
+      return null;
     }
 
     try {
@@ -184,14 +187,14 @@ export function useAudioRecorder(): AudioRecorderHook {
 
       // 1. Stop and Unload first
       const finalStatus = await recording.stopAndUnloadAsync();
-      
+
       // 2. Get URI after unloading
       const uri = recording.getURI();
-      
+
       // 3. Cleanup ref immediately
       recording.setOnRecordingStatusUpdate(null);
       recordingRef.current = null;
-      
+
       if (!uri) {
         // Instead of throwing, treat as a non-error case and return null
         console.warn('No recording URI generated');
@@ -199,13 +202,27 @@ export function useAudioRecorder(): AudioRecorderHook {
         return null;
       }
 
-      const finalDuration = finalStatus.durationMillis;
+      let finalDuration = finalStatus.durationMillis || durationRef.current;
+
+      // Double check: if duration is still 0 (short recording or bug), try to check file
+      if (finalDuration === 0) {
+        try {
+          const { sound: checkSound, status: checkStatus } = await Audio.Sound.createAsync({ uri });
+          if (checkStatus.isLoaded && checkStatus.durationMillis) {
+            finalDuration = checkStatus.durationMillis;
+          }
+          await checkSound.unloadAsync();
+        } catch (e) {
+          console.warn("Retrying duration check failed", e);
+        }
+      }
+
       setRecordingTime(finalDuration);
 
       // 4. Save
       const savedRecording = await recordingService.saveRecording(
-        uri, 
-        finalDuration, 
+        uri,
+        finalDuration,
         meteringRef.current
       );
 
@@ -220,6 +237,31 @@ export function useAudioRecorder(): AudioRecorderHook {
       return null;
     }
   };
+
+  const cancelRecording = async (): Promise<void> => {
+    if (status !== 'recording' && status !== 'paused') return;
+
+    try {
+      if (recordingRef.current) {
+        await recordingRef.current.stopAndUnloadAsync();
+        recordingRef.current.setOnRecordingStatusUpdate(null);
+        recordingRef.current = null;
+      }
+
+      // Reset state
+      setRecordingTime(0);
+      setAudioLevel(0);
+      meteringRef.current = [];
+      setStatus('idle');
+
+    } catch (err: any) {
+      console.error('Cancel Error:', err);
+      setError(err.message || 'Failed to cancel recording');
+      setStatus('error');
+      await cleanup();
+    }
+  };
+
 
   const toggleRecording = async () => {
     try {
@@ -246,6 +288,7 @@ export function useAudioRecorder(): AudioRecorderHook {
     pauseRecording,
     resumeRecording,
     stopRecording,
+    cancelRecording,
     toggleRecording,
     error
   };

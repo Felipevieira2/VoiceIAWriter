@@ -6,6 +6,9 @@ export interface Recording {
   status: 'draft' | 'published';
   fileUri: string; // Path to the audio file on the device
   meteringLevels?: number[]; // Optional: stored metering levels for waveform visualization
+  transcription?: string;
+  language?: string;
+  transcriptionStatus?: 'pending' | 'processing' | 'completed' | 'failed';
 }
 
 export type RecorderStatus = 'idle' | 'recording' | 'paused' | 'stopped' | 'error';
@@ -21,6 +24,7 @@ export interface AudioRecorderHook {
   pauseRecording: () => Promise<void>;
   resumeRecording: () => Promise<void>;
   stopRecording: () => Promise<Recording | null>;
+  cancelRecording: () => Promise<void>;
   toggleRecording: () => Promise<void>;
   error: string | null;
 }

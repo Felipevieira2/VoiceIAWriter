@@ -3,3 +3,6 @@ uvicorn
 python-multipart
 faster-whisper
 requests
+transformers
+torch
+sentencepiece

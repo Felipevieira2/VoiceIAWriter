@@ -7,22 +7,20 @@ import Animated, {
   withTiming,
   withSpring,
   Easing,
-  useDerivedValue,
   interpolate,
-  cancelAnimation,
 } from 'react-native-reanimated';
 
 // -----------------------------------------------------------------------------
 // Constants & Configuration
 // -----------------------------------------------------------------------------
 const SCREEN_WIDTH = Dimensions.get('window').width;
-const VIEW_HEIGHT = 200;
-const VIEW_WIDTH = SCREEN_WIDTH - 48; // Padding adjustment
-const POINTS = 40; // Resolution of the wave
-const SMOOTHING_FACTOR = 0.15; // How fast the amplitude reacts (lerp)
-const IDLE_AMPLITUDE = 0.1; // Amplitude when silence
-const MAX_AMPLITUDE = 0.9; // Max amplitude scaling
-const PHASE_SPEED = 0.08; // Speed of the wave animation
+const VIEW_HEIGHT = 150; // Compact height
+const VIEW_WIDTH = SCREEN_WIDTH - 64; // More padding to center it nicely
+const BAR_COUNT = 35; // Number of bars to display
+const BAR_WIDTH = 4; // Width of each bar
+const BAR_GAP = (VIEW_WIDTH - (BAR_COUNT * BAR_WIDTH)) / (BAR_COUNT - 1);
+const MAX_BAR_HEIGHT = VIEW_HEIGHT * 0.8;
+const MIN_BAR_HEIGHT = 4; // Minimum height for "silence"
 
 // -----------------------------------------------------------------------------
 // Types
@@ -32,12 +30,12 @@ interface AudioVisualizerProps {
    * Normalized audio level (0.0 - 1.0)
    */
   level: number;
-  
+
   /**
    * Whether the visualization is active (recording/listening)
    */
   active: boolean;
-  
+
   /**
    * Primary color of the waveform
    */
@@ -47,173 +45,103 @@ interface AudioVisualizerProps {
 // -----------------------------------------------------------------------------
 // Animated Path Component
 // -----------------------------------------------------------------------------
-// We create an animated component for the SVG Path to update props on the UI thread
 const AnimatedPath = Animated.createAnimatedComponent(Path);
 
 export default function AudioVisualizer({
   level,
   active,
-  color = '#3b82f6', // blue-500
+  color = '#3b82f6',
 }: AudioVisualizerProps) {
   // ---------------------------------------------------------------------------
   // Shared Values
   // ---------------------------------------------------------------------------
-  // The current smoothed audio level (for amplitude)
-  const smoothedLevel = useSharedValue(0);
-  
-  // The phase (time) of the wave animation
-  const phase = useSharedValue(0);
+  // We keep a history of levels to create the "scrolling" effect
+  // Initialize with small values
+  const levels = useSharedValue<number[]>(new Array(BAR_COUNT).fill(0.02));
 
   // ---------------------------------------------------------------------------
   // Animation Logic
   // ---------------------------------------------------------------------------
-  
-  // 1. Update smoothed level based on input prop
   useEffect(() => {
-    // If not active, drop to zero/idle quickly
-    const target = active ? Math.max(IDLE_AMPLITUDE, level) : 0;
-    
-    // Smooth interpolation to avoid jitter
-    smoothedLevel.value = withSpring(target, {
-      damping: 20,
-      stiffness: 150,
-      mass: 0.5,
-    });
-  }, [level, active]);
-
-  // 2. Continuous Wave Animation Loop
-  useEffect(() => {
-    // Start the phase animation
-    // We use a large duration linear animation to simulate an infinite loop
-    // In a real game loop we might use useFrameCallback, but this is simpler for UI
-    const startLoop = () => {
-      phase.value = withTiming(phase.value + 1000, {
-        duration: 200000, // Very long duration
-        easing: Easing.linear,
-      });
-    };
-
-    if (active) {
-      startLoop();
-    } else {
-      cancelAnimation(phase);
-      // Optional: reset phase or let it pause
+    if (!active) {
+      // When inactive, flatten the line smoothly
+      // We can do this by filling the array with zeros gradually or just letting the effect stop
+      // But for a nice exit, let's just reset smoothly? 
+      // Reanimated arrays are hard to "animate" all at once. 
+      // We'll rely on the incoming level being 0 from the parent if paused/stopped, 
+      // or we manually push 0s if active is false but we want to clear the screen.
+      // For now, assume parent stops sending levels or sends 0.
+      return;
     }
 
-    return () => cancelAnimation(phase);
-  }, [active]);
+    // Push new level into history
+    // We smooth the input slightly to remove extreme jitter, 
+    // although raw input usually looks best for voice.
+    // Let's ensure level is non-negative
+    const currentLevel = Math.max(0, level);
+
+    // Shift and push
+    // We create a new array to trigger the Reanimated update
+    // 'value' update on the JS thread triggers the worklet on UI thread
+    const currentHistory = levels.value;
+    const newHistory = [...currentHistory.slice(1), currentLevel];
+    levels.value = newHistory;
+  }, [level, active]);
 
   // ---------------------------------------------------------------------------
   // Path Generation (Worklet)
   // ---------------------------------------------------------------------------
-  // We use useAnimatedProps to calculate the path string on the UI thread
   const animatedProps = useAnimatedProps(() => {
-    // Base amplitude logic
-    // We interpolate the level to a pixel height
-    const amplitude = interpolate(
-      smoothedLevel.value,
-      [0, 1],
-      [10, VIEW_HEIGHT * 0.4] // Min 10px, Max 40% of view height
-    );
+    let d = '';
+    const data = levels.value;
+    const centerY = VIEW_HEIGHT / 2;
 
-    // Generate path points
-    // We combine 3 sine waves for an organic look
-    // y = A * sin(kx + wt)
-    let d = `M 0 ${VIEW_HEIGHT / 2}`;
-    
-    for (let i = 0; i <= POINTS; i++) {
-      const x = (i / POINTS) * VIEW_WIDTH;
-      // Normalized x (0 to 1) for frequency calculation
-      const nx = i / POINTS; 
-      
-      const t = phase.value * PHASE_SPEED;
+    for (let i = 0; i < BAR_COUNT; i++) {
+      // Calculate x position for this bar
+      const x = i * (BAR_WIDTH + BAR_GAP);
 
-      // Wave 1: Main low frequency
-      const y1 = Math.sin(nx * Math.PI * 2 + t);
-      
-      // Wave 2: Medium frequency, different phase
-      const y2 = Math.sin(nx * Math.PI * 4 + t * 1.5 + Math.PI / 4);
-      
-      // Wave 3: Higher frequency, lower amplitude contribution
-      const y3 = Math.sin(nx * Math.PI * 6 + t * 0.5) * 0.5;
+      // Retrieve level for this bar position
+      const val = data[i];
 
-      // Combine and scale
-      // We taper the ends to 0 so the wave connects smoothly at the sides
-      // Taper function: sin(pi * nx) -> 0 at start, 1 at center, 0 at end
-      const taper = Math.sin(Math.PI * nx);
-      
-      const combinedY = (y1 + y2 * 0.5 + y3 * 0.25) / 1.75; // Normalize roughly to -1..1
-      const y = (VIEW_HEIGHT / 2) + (combinedY * amplitude * taper);
+      // Apply amplitude scaling
+      // Interpolate 0-1 noise floor to reasonable heights
+      // We enforce a minimum height so the bar is always visible as a dot/dash
+      const barHeight = interpolate(
+        val,
+        [0, 1],
+        [MIN_BAR_HEIGHT, MAX_BAR_HEIGHT]
+      );
 
-      d += ` L ${x} ${y}`;
+      // Draw vertical line centered vertically
+      const yTop = centerY - (barHeight / 2);
+      const yBottom = centerY + (barHeight / 2);
+
+      // Move to top of bar
+      d += `M ${x + BAR_WIDTH / 2} ${yTop}`;
+      // Line to bottom of bar
+      d += `L ${x + BAR_WIDTH / 2} ${yBottom}`;
     }
 
-    // Close the path (optional, but good for fills)
-    // For a line, we might just end it. Let's make it a filled shape or just a thick stroke.
-    // Let's try just a stroke first as requested "waveform"
-    // But "organic curves" often implies a filled area or multiple lines.
-    // Let's stick to a single clean stroke for "Voice Memos" style, 
-    // maybe dual paths for a "mirrored" look if desired.
-    
     return {
       d: d,
     };
   });
 
-  // Secondary "Shadow" or "Echo" path for premium feel (slightly offset, lower opacity)
-  const animatedPropsEcho = useAnimatedProps(() => {
-    const amplitude = interpolate(
-      smoothedLevel.value,
-      [0, 1],
-      [5, VIEW_HEIGHT * 0.45] // Slightly different scale
-    );
-
-    let d = `M 0 ${VIEW_HEIGHT / 2}`;
-    
-    for (let i = 0; i <= POINTS; i++) {
-      const x = (i / POINTS) * VIEW_WIDTH;
-      const nx = i / POINTS; 
-      const t = phase.value * PHASE_SPEED - 0.5; // Phase lag
-
-      const y1 = Math.sin(nx * Math.PI * 2 + t);
-      const y2 = Math.sin(nx * Math.PI * 3 + t * 1.2);
-      
-      const taper = Math.sin(Math.PI * nx);
-      const combinedY = (y1 + y2 * 0.5) / 1.5;
-      const y = (VIEW_HEIGHT / 2) + (combinedY * amplitude * taper);
-
-      d += ` L ${x} ${y}`;
-    }
-    return { d };
-  });
-
   return (
     <View style={styles.container}>
       <Svg width={VIEW_WIDTH} height={VIEW_HEIGHT}>
-        {/* Echo Line (Background) */}
-        <AnimatedPath
-          animatedProps={animatedPropsEcho}
-          fill="none"
-          stroke={color}
-          strokeWidth={2}
-          strokeOpacity={0.3}
-          strokeLinecap="round"
-          strokeLinejoin="round"
-        />
-        {/* Main Line (Foreground) */}
         <AnimatedPath
           animatedProps={animatedProps}
           fill="none"
           stroke={color}
-          strokeWidth={4}
-          strokeOpacity={1}
+          strokeWidth={BAR_WIDTH}
           strokeLinecap="round"
           strokeLinejoin="round"
         />
       </Svg>
     </View>
   );
-};
+}
 
 const styles = StyleSheet.create({
   container: {

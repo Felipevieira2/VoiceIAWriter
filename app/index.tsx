@@ -1,7 +1,7 @@
 import { View, Text, TouchableOpacity, Alert } from 'react-native';
 import { useAudioRecorder } from '../src/hooks/useAudioRecorder';
 import AudioVisualizer from '../src/components/AudioVisualizer';
-import { Settings, User, Mic, Square, Pause, Play } from 'lucide-react-native';
+import { Settings, User, Mic, Square, Pause, Play, X } from 'lucide-react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 
@@ -15,6 +15,7 @@ export default function Home() {
     audioLevel,
     toggleRecording,
     stopRecording,
+    cancelRecording,
     error: recorderError
   } = useAudioRecorder();
 
@@ -43,6 +44,14 @@ export default function Home() {
     } catch (error) {
       console.error('Save error:', error);
       Alert.alert('Error', 'Error saving recording.');
+    }
+  };
+
+  const handleCancel = async () => {
+    if (isRecording) {
+      await cancelRecording();
+    } else {
+      await cancelRecording();
     }
   };
 
@@ -87,10 +96,7 @@ export default function Home() {
 
           {/* Visualizer */}
           <View className="w-full h-48 mb-6 items-center justify-center relative">
-            <View
-              className={`absolute w-64 h-40 bg-blue-500/20 rounded-full blur-3xl ${isRecording && !isPaused ? 'opacity-100' : 'opacity-30'}`}
-              style={{ pointerEvents: 'none' }}
-            />
+
             <AudioVisualizer
               level={audioLevel}
               active={isRecording && !isPaused}
@@ -113,6 +119,16 @@ export default function Home() {
                 <Pause size={44} color="white" />
               )}
             </TouchableOpacity>
+
+            {/* Cancel Button */}
+            {isSessionActive && (
+              <TouchableOpacity
+                onPress={handleCancel}
+                className="absolute -left-20 flex items-center justify-center w-12 h-12 rounded-full bg-slate-700"
+              >
+                <X size={20} color="white" />
+              </TouchableOpacity>
+            )}
 
             {/* Stop Button */}
             {isSessionActive && (

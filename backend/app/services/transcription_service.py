@@ -1,49 +1,80 @@
 import os
+import re
 from faster_whisper import WhisperModel
+from transformers import pipeline
 
 class TranscriptionService:
-    def __init__(self, model_size: str = "small", device: str = "cpu", compute_type: str = "int8"):
+    def __init__(self, model_size: str = "medium", device: str = "cpu", compute_type: str = "int8"):
         """
-        Initializes the TranscriptionService with the specified Faster-Whisper model configuration.
+        Initializes the TranscriptionService with Faster-Whisper and a local AI Summarizer.
         """
         print(f"Loading Whisper model: {model_size} on {device} with {compute_type}...")
         self.model = WhisperModel(model_size, device=device, compute_type=compute_type)
-        print("Whisper model loaded successfully.")
+        
+        print("Loading local AI Title Generator (t5-small)...")
+        try:
+            # Carrega um modelo de sumarização local para gerar o título
+            self.summarizer = pipeline(
+                "summarization", 
+                model="t5-small", 
+                device=-1  # Força CPU
+            )
+            print("AI Title Generator loaded.")
+        except Exception as e:
+            print(f"Warning: Could not load local AI Title Generator: {e}")
+            self.summarizer = None
+        
+        print("Services initialized successfully.")
 
     def transcribe(self, file_path: str, language: str = "pt") -> dict:
-        """
-        Transcribes the given audio file using Faster-Whisper.
-
-        Args:
-            file_path (str): The absolute path to the audio file.
-            language (str): The language code to force transcription (default: 'pt').
-                            If None is passed, auto-detection logic could be applied, 
-                            but based on requirements, we stick to 'pt' default.
-
-        Returns:
-            dict: A dictionary containing:
-                - text (str): The full transcribed text.
-                - language (str): The detected or forced language.
-                - start_time (float): Start time of the transcription (usually 0.0).
-                - end_time (float): End time based on duration.
-                - duration (float): Total duration of the audio.
-        """
         if not os.path.exists(file_path):
             raise FileNotFoundError(f"Audio file not found at: {file_path}")
 
-        # Configura o transcribe do whisper para forçar o idioma português (language='pt') 
-        # mas permite que seja informado outro via argumento.
         segments, info = self.model.transcribe(file_path, language=language)
 
-        # Convert segments generator to list to extract text
-        # While converting, we concatenate the text.
         segment_list = list(segments)
         full_text = " ".join([segment.text for segment in segment_list]).strip()
 
+        # IA Analysis for Title
+        title = self._generate_ai_title(full_text)
+        print(f"AI Generated title: '{title}'")
+
         return {
+            "title": title,
             "text": full_text,
             "language": info.language,
             "start_time": 0.0,
             "end_time": info.duration,
             "duration": info.duration
         }
+
+    def _generate_ai_title(self, text: str) -> str:
+        """
+        Uses local AI to analyze text and generate a meaningful title.
+        """
+        if not text or len(text.strip()) < 10:
+            return "Nova Transcrição"
+
+        if self.summarizer:
+            try:
+                # O T5 espera o prefixo 'summarize: '
+                # Limitamos o tamanho para gerar algo curto como um título
+                input_text = f"summarize: {text[:512]}" # Limita entrada para performance
+                result = self.summarizer(input_text, max_length=15, min_length=3, do_sample=False)
+                
+                title = result[0]['summary_text']
+                # Limpeza básica do título gerado
+                title = re.sub(r'[^\w\s]', '', title).strip()
+                title = title.capitalize()
+                
+                if title:
+                    return title
+            except Exception as e:
+                print(f"AI Title generation error: {e}")
+
+        # Fallback inteligente (Heurística de backup)
+        text = text.strip()
+        sentences = re.split(r'(?<=[.!?])\s+', text)
+        candidate = sentences[0] if sentences else text
+        return (candidate[:47] + "...") if len(candidate) > 50 else candidate
+

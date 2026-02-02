@@ -41,6 +41,20 @@ export default function AppLayout() {
             headerShown: false,
           }}
         />
+        <Tabs.Screen
+          name="revision"
+          options={{
+            href: null,
+            headerShown: false,
+          }}
+        />
+        <Tabs.Screen
+          name="feedback-demo"
+          options={{
+            href: null,
+            headerShown: false,
+          }}
+        />
       </Tabs>
     </>
   );

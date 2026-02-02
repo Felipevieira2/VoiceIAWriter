@@ -2,6 +2,7 @@ import React, { useEffect } from 'react';
 import { Text, TouchableOpacity, View } from 'react-native';
 import Animated, { FadeInUp, FadeOutUp, Layout } from 'react-native-reanimated';
 import { CheckCircle, AlertCircle, AlertTriangle, Info, X } from 'lucide-react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 export type FeedbackType = 'success' | 'error' | 'warning' | 'info';
 
@@ -79,8 +80,8 @@ export const FeedbackMessage: React.FC<FeedbackMessageProps> = ({
   const Icon = config.icon;
 
   return (
-    <Animated.View 
-      entering={FadeInUp.springify().damping(15)} 
+    <Animated.View
+      entering={FadeInUp.springify().damping(15)}
       exiting={FadeOutUp.duration(200)}
       layout={Layout.springify()}
       className={`absolute left-4 right-4 z-50 flex-row items-start p-4 rounded-2xl border ${config.bgColor} ${config.borderColor} shadow-sm backdrop-blur-md`}
@@ -102,14 +103,14 @@ export const FeedbackMessage: React.FC<FeedbackMessageProps> = ({
       <View className="mt-0.5">
         <Icon size={24} color={config.iconColor} />
       </View>
-      
+
       <View className="flex-1 mx-3">
         <Text className={`font-medium text-base ${config.textColor}`}>
           {message}
         </Text>
       </View>
 
-      <TouchableOpacity 
+      <TouchableOpacity
         onPress={onClose}
         className="mt-0.5 p-1 -mr-1 rounded-full active:bg-black/5 dark:active:bg-white/10"
         accessibilityLabel="Close feedback message"

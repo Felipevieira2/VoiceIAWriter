@@ -29,6 +29,7 @@ A resposta será um objeto JSON contendo o texto transcrito e metadados.
 
 ```json
 {
+  "title": "Olá, este é um teste...",
   "text": "Olá, este é um teste de transcrição em português.",
   "language": "pt",
   "start_time": 0.0,
